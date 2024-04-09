@@ -1,3 +1,4 @@
+Data and scripts used in "Transition of survival strategies under global climate shifts in the grape family"
 Descriptions for each file:
 	Ase_bin.rev: The script for ancestral state reconstructions of  binary-state traits used in RevBayes.
 	Ase_tri.rev: The script for ancestral state reconstructions of multistate (number of states = 3) traits used in RevBayes.
