@@ -1,0 +1,101 @@
+setwd("###")
+CHARACTER = "###"
+index = "##"
+NUM_STATES = 3
+NUM_HIDDEN_STATES = 1
+morpho <- readDiscreteCharacterData(""+index+"_"+CHARACTER+".nex")
+morpho_exp = morpho.expandCharacters( NUM_HIDDEN_STATES )
+moves    = VectorMoves()
+monitors = VectorMonitors()
+phylogeny <- readTrees("dated_Vitaceae.nex")[1]
+for (i in 1:3) {
+    for (j in 1:3) {
+        rates[i][j] <- 0.0
+    }
+}
+rate_pr := phylogeny.treeLength() / 10
+H <- 0.587405
+SD_PRIOR <- 1/H
+
+rate_01_median ~ dnExponential( rate_pr )
+rate_01_sd ~ dnExponential( SD_PRIOR )
+moves.append( mvScale( rate_01_median, weight=2 ) )
+moves.append( mvScale( rate_01_sd, weight=2 ) )
+rate_01 := fnDiscretizeDistribution( dnLognormal( ln(rate_01_median), rate_01_sd ), NUM_HIDDEN_STATES )
+rate_10_median ~ dnExponential( rate_pr )
+rate_10_sd ~ dnExponential( SD_PRIOR )
+moves.append( mvScale( rate_10_median, weight=2 ) )
+moves.append( mvScale( rate_10_sd, weight=2 ) )
+rate_10 := fnDiscretizeDistribution( dnLognormal( ln(rate_10_median), rate_10_sd ), NUM_HIDDEN_STATES )
+rate_12_median ~ dnExponential( rate_pr )
+rate_12_sd ~ dnExponential( SD_PRIOR )
+moves.append( mvScale( rate_12_median, weight=2 ) )
+moves.append( mvScale( rate_12_sd, weight=2 ) )
+rate_12 := fnDiscretizeDistribution( dnLognormal( ln(rate_12_median), rate_12_sd ), NUM_HIDDEN_STATES )
+rate_21_median ~ dnExponential( rate_pr )
+rate_21_sd ~ dnExponential( SD_PRIOR )
+moves.append( mvScale( rate_21_median, weight=2 ) )
+moves.append( mvScale( rate_21_sd, weight=2 ) )
+rate_21 := fnDiscretizeDistribution( dnLognormal( ln(rate_21_median), rate_21_sd ), NUM_HIDDEN_STATES )
+rate_20_median ~ dnExponential( rate_pr )
+rate_20_sd ~ dnExponential( SD_PRIOR )
+moves.append( mvScale( rate_20_median, weight=2 ) )
+moves.append( mvScale( rate_20_sd, weight=2 ) )
+rate_20 := fnDiscretizeDistribution( dnLognormal( ln(rate_20_median), rate_20_sd ), NUM_HIDDEN_STATES )
+rate_02_median ~ dnExponential( rate_pr )
+rate_02_sd ~ dnExponential( SD_PRIOR )
+moves.append( mvScale( rate_02_median, weight=2 ) )
+moves.append( mvScale( rate_02_sd, weight=2 ) )
+rate_02 := fnDiscretizeDistribution( dnLognormal( ln(rate_02_median), rate_02_sd ), NUM_HIDDEN_STATES )
+
+switch_slow_fast ~ dnExponential( rate_pr )
+switch_fast_slow ~ dnExponential( rate_pr )
+moves.append( mvScale( switch_slow_fast, weight=2 ) )
+moves.append( mvScale( switch_fast_slow, weight=2 ) )
+
+#rates[1][2] := rate_01[1]    
+#rates[2][1] := rate_10[1]    
+rates[2][3] := rate_12[1]
+rates[3][2] := rate_21[1]
+rates[1][3] := rate_02[1]
+rates[3][1] := rate_20[1]
+
+Q_morpho := fnFreeK(rates, rescaled=FALSE)
+Q_morpho
+
+rf_prior <- rep(1,NUM_STATES*NUM_HIDDEN_STATES)
+rf ~ dnDirichlet( rf_prior )
+moves.append( mvBetaSimplex( rf, weight=2 ) )
+moves.append( mvDirichletSimplex( rf, weight=2 ) )
+
+phyMorpho ~ dnPhyloCTMC(tree=phylogeny, Q=Q_morpho, rootFrequencies=rf, type="NaturalNumbers")
+phyMorpho.clamp(morpho_exp)
+
+
+mymodel = model(phylogeny)
+monitors.append( mnModel(filename=""+CHARACTER+"_ase/"+index+"_"+CHARACTER+"_ase.log", printgen=1) )
+monitors.append( mnScreen(printgen=100) )
+monitors.append( mnJointConditionalAncestralState(tree=phylogeny,
+                                                  ctmc=phyMorpho,
+                                                  filename=""+CHARACTER+"_ase/"+index+"_"+CHARACTER+"_ase.states.txt",
+                                                  type="NaturalNumbers",
+                                                  printgen=1,
+                                                  withTips=true,
+                                                  withStartStates=false) )
+monitors.append( mnStochasticCharacterMap(ctmc=phyMorpho,
+                       filename=""+CHARACTER+"_ase/"+index+"_"+CHARACTER+"_stoch_map.log",
+                       printgen=1) )
+mymcmc = mcmc(mymodel, monitors, moves, nruns=2, combine="mixed")
+
+mymcmc.run(generations=5000, tuningInterval=100)
+
+anc_states = readAncestralStateTrace(""+CHARACTER+"_ase/"+index+"_"+CHARACTER+"_ase.states.txt")
+anc_tree = ancestralStateTree(tree=phylogeny, ancestral_state_trace_vector=anc_states, include_start_states=false, file=""+CHARACTER+"_ase/"+index+"_"+CHARACTER+"_ase_ase.tree", burnin=0.25, summary_statistic="MAP", site=1, nStates=NUM_STATES*NUM_HIDDEN_STATES)
+anc_state_trace = readAncestralStateTrace(""+CHARACTER+"_ase/"+index+"_"+CHARACTER+"_stoch_map.log")
+characterMapTree(phylogeny,
+                 anc_state_trace,
+                 character_file=""+CHARACTER+"_ase/"+index+"_"+CHARACTER+"_stoch_map_character.tree",
+                 posterior_file=""+CHARACTER+"_ase/"+index+"_"+CHARACTER+"_stoch_map_posterior.tree",
+                 shift_prob_file=""+CHARACTER+"_ase/"+index+"_"+CHARACTER+"_stoch_map_marginal_shift.tree",
+                 burnin=0.1,
+                 reconstruction="marginal")

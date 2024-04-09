@@ -1,0 +1,91 @@
+Trait_A = "###"
+Trait_B = "###"
+setwd("###")
+morpho_A <- readDiscreteCharacterData("trait_matrix/ob_"+Trait_A+".nex")
+morpho_B <- readDiscreteCharacterData("trait_matrix/ob_"+Trait_B+".nex")
+morpho = combineCharacter( morpho_A, morpho_B )
+morpho
+
+moves = VectorMoves()
+monitors = VectorMonitors()
+phylogeny <- readTrees("trait_matrix/dated_Vitaceae.tre")[1]
+
+for (i in 1:4) {
+  for (j in 1:4) {
+    rates[i][j] <- 0.0
+  }
+}
+
+rate_pr := phylogeny.treeLength() / 10
+mix_prob <- 0.5
+rate_01_A_when_B0 ~ dnExponential( rate_pr )
+rate_01_A_when_B1 ~ dnReversibleJumpMixture(rate_01_A_when_B0, dnExponential( rate_pr ), mix_prob)
+rate_10_A_when_B0 ~ dnExponential( rate_pr )
+rate_10_A_when_B1 ~ dnReversibleJumpMixture(rate_10_A_when_B0, dnExponential( rate_pr ), mix_prob)
+rate_01_B_when_A0 ~ dnExponential( rate_pr )
+rate_01_B_when_A1 ~ dnReversibleJumpMixture(rate_01_B_when_A0, dnExponential( rate_pr ), mix_prob)
+rate_10_B_when_A0 ~ dnExponential( rate_pr )
+rate_10_B_when_A1 ~ dnReversibleJumpMixture(rate_10_B_when_A0, dnExponential( rate_pr ), mix_prob)
+prob_01_A_indep := ifelse( rate_01_A_when_B0 == rate_01_A_when_B1, 1.0, 0.0 )
+prob_10_A_indep := ifelse( rate_10_A_when_B0 == rate_10_A_when_B1, 1.0, 0.0 )
+prob_01_B_indep := ifelse( rate_01_B_when_A0 == rate_01_B_when_A1, 1.0, 0.0 )
+prob_10_B_indep := ifelse( rate_10_B_when_A0 == rate_10_B_when_A1, 1.0, 0.0 )
+moves.append( mvScale( rate_01_A_when_B0, weight=2 ) )
+moves.append( mvScale( rate_01_A_when_B1, weight=2 ) )
+moves.append( mvScale( rate_10_A_when_B0, weight=2 ) )
+moves.append( mvScale( rate_10_A_when_B1, weight=2 ) )
+moves.append( mvScale( rate_01_B_when_A0, weight=2 ) )
+moves.append( mvScale( rate_01_B_when_A1, weight=2 ) )
+moves.append( mvScale( rate_10_B_when_A0, weight=2 ) )
+moves.append( mvScale( rate_10_B_when_A1, weight=2 ) )
+moves.append( mvRJSwitch(rate_01_A_when_B1, weight=2.0) )
+moves.append( mvRJSwitch(rate_10_A_when_B1, weight=2.0) )
+moves.append( mvRJSwitch(rate_01_B_when_A1, weight=2.0) )
+moves.append( mvRJSwitch(rate_10_B_when_A1, weight=2.0) )
+rates[1][2] := rate_01_A_when_B0 # 00->10
+rates[1][3] := rate_01_B_when_A0 # 00->01
+rates[2][1] := rate_10_A_when_B0 # 10->00
+rates[2][4] := rate_01_B_when_A1 # 10->11
+rates[3][1] := rate_10_B_when_A0 # 01->00
+rates[3][4] := rate_01_A_when_B1 # 01->11
+rates[4][2] := rate_10_B_when_A1 # 11->10
+rates[4][3] := rate_10_A_when_B1 # 11->01
+Q_morpho := fnFreeK(rates, rescaled=FALSE)
+rf_prior <- rep(1,2*2)
+rf ~ dnDirichlet( rf_prior )
+moves.append( mvBetaSimplex( rf, weight=2 ) )
+moves.append( mvDirichletSimplex( rf, weight=2 ) )
+phyMorpho ~ dnPhyloCTMC(tree=phylogeny, Q=Q_morpho, rootFrequencies=rf, type="NaturalNumbers")
+phyMorpho.clamp( morpho )
+mymodel = model(phylogeny)
+# 1. for the full model #
+monitors.append( mnModel(filename=""+Trait_A+"_"+Trait_B+"/"+Trait_A+"_"+Trait_B+".log", printgen=1) )
+# 2. and a few select parameters to be printed to the screen #
+monitors.append( mnScreen(printgen=10) )
+# 3. add an ancestral state monitor
+monitors.append( mnJointConditionalAncestralState(tree=phylogeny,
+                                                  ctmc=phyMorpho,
+                                                  filename=""+Trait_A+"_"+Trait_B+"/"+Trait_A+"_"+Trait_B+"_states.txt",
+                                                  type="NaturalNumbers",
+                                                  printgen=1,
+                                                  withTips=true,
+                                                  withStartStates=false) )
+# 4. add an stochastic character map monitor
+monitors.append( mnStochasticCharacterMap(ctmc=phyMorpho,
+                                          filename=""+Trait_A+"_"+Trait_B+"/"+Trait_A+"_"+Trait_B+"_stoch_char_map.log",
+                                          printgen=1,
+                                          include_simmap=true) )
+mymcmc = mcmc(mymodel, monitors, moves, nruns=2, combine="mixed")
+mymcmc.run(generations=10000, tuningInterval=200)
+# Read in the tree trace and construct the ancestral states (ASE) #
+anc_states = readAncestralStateTrace(""+Trait_A+"_"+Trait_B+"/"+Trait_A+"_"+Trait_B+"_states.txt")
+anc_tree = ancestralStateTree(tree=phylogeny, ancestral_state_trace_vector=anc_states, include_start_states=false, file=""+Trait_A+"_"+Trait_B+"/"+Trait_A+"_"+Trait_B+".tree", burnin=0.25, summary_statistic="MAP", site=1, nStates=2*2)
+anc_states_stoch_map = readAncestralStateTrace(""+Trait_A+"_"+Trait_B+"/"+Trait_A+"_"+Trait_B+"_stoch_char_map.log")
+char_map_tree = characterMapTree(tree=phylogeny,
+                 ancestral_state_trace_vector=anc_states_stoch_map,
+                 character_file=""+Trait_A+"_"+Trait_B+"/"+Trait_A+"_"+Trait_B+"_marginal_character.tree",
+                 posterior_file=""+Trait_A+"_"+Trait_B+"/"+Trait_A+"_"+Trait_B+"_marginal_posterior.tree",
+                 shift_prob_file=""+Trait_A+"_"+Trait_B+"/"+Trait_A+"_"+Trait_B+"_marginal_shift.tree",
+                 burnin=0.25,
+                 num_time_slices=500)
+q()
